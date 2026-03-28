@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Анализ кандидатов | inVision U</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    .header {
+      background: #1a1a2e;
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    .content {
+      padding: 30px;
+    }
+    textarea {
+      width: 100%;
+      height: 200px;
+      padding: 15px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      font-family: inherit;
+      resize: vertical;
+    }
+    button {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 12px 30px;
+      border-radius: 25px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 15px;
+    }
+    .result, .error {
+      margin-top: 30px;
+      padding: 20px;
+      border-radius: 10px;
+    }
+    .result {
+      background: #f8f9fa;
+      display: none;
+    }
+    .error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+      display: none;
+    }
+    .loading {
+      text-align: center;
+      color: #667eea;
+      padding: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    td {
+      padding: 10px;
+      border-bottom: 1px solid #dee2e6;
+    }
+    td:first-child {
+      font-weight: bold;
+      width: 30%;
+      background: #e9ecef;
+    }
+    .score-pass {
+      background: #d4edda;
+      color: #155724;
+      display: inline-block;
+      padding: 5px 15px;
+      border-radius: 20px;
+    }
+    .score-fail {
+      background: #f8d7da;
+      color: #721c24;
+      display: inline-block;
+      padding: 5px 15px;
+      border-radius: 20px;
+    }
+    .error-code {
+      font-family: monospace;
+      background: #fff;
+      padding: 5px 10px;
+      border-radius: 5px;
+      display: inline-block;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>🤖 AI Анализ кандидатов</h1>
+    <p>inVision U — помощник для приёмной комиссии</p>
+  </div>
+  <div class="content">
+    <label for="essay"></label><textarea id="essay" placeholder="Вставьте текст эссе или интервью кандидата..."></textarea>
+    <button onclick="analyze()">🔍 Анализировать кандидата</button>
+    <div id="loading" class="loading" style="display: none;">⏳ Анализируем...</div>
+    <div id="error" class="error"></div>
+    <div id="result" class="result"></div>
+  </div>
+</div>
+
+<script>
+  async function analyze() {
+    const essay = document.getElementById('essay').value;
+    if (!essay.trim()) {
+      showError('Введите текст для анализа', 400);
+      return;
+    }
+
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('error').style.display = 'none';
+    document.getElementById('result').style.display = 'none';
+
+    try {
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ essay: essay })
+      });
+
+      const data = await response.json();
+      data.recommend = undefined;
+      data.weaknesses = undefined;
+      data.strengths = undefined;
+      data.skills = undefined;
+      data.achievements = undefined;
+      data.motivation = undefined;
+      data.age = undefined;
+      data.score = undefined;
+
+      if (!response.ok) {
+        showError(data.error, data.code);
+        return;
+      }
+
+      const scoreClass = data.score >= 70 ? 'score-pass' : 'score-fail';
+      const scoreText = data.score >= 70 ? '✅ Рекомендуется к рассмотрению' : '⚠️ Требуется дополнительное интервью';
+
+      document.getElementById('result').innerHTML = `
+                    <h3>📊 Результат анализа</h3>
+                    <div class="${scoreClass}" style="margin-bottom: 15px;">
+                        🎯 Скор: ${data.score}/100 — ${scoreText}
+                    </div>
+                    <table>
+                        <tr><td>👤 ФИО</td><td>${data.name}</td></tr>
+                        <tr><td>🎂 Возраст</td><td>не указан</td></tr>
+                        <tr><td>💪 Мотивация</td><td>${data.motivation}</td></tr>
+                        <tr><td>🏆 Успехи</td><td>${data.achievements.join(', ')}</td></tr>
+                        <tr><td>🛠 Навыки</td><td>${data.skills.join(', ')}</td></tr>
+                        <tr><td>✅ Сильные стороны</td><td>${data.strengths.join(', ')}</td></tr>
+                        <tr><td>⚠️ На что обратить внимание</td><td>${data.weaknesses.join(', ')}</td></tr>
+                        <tr><td>💡 Рекомендация</td><td>${data.recommend}</td></tr>
+                    </table>
+                `;
+      document.getElementById('result').style.display = 'block';
+    } catch (error) {
+      showError('Ошибка соединения с сервером', 500);
+    } finally {
+      document.getElementById('loading').style.display = 'none';
+    }
+  }
+
+  function showError(message, code) {
+    const errorDiv = document.getElementById('error');
+    errorDiv.innerHTML = `
+                <strong>❌ Ошибка</strong><br>
+                ${message}<br>
+                <div class="error-code">Код ошибки: ${code}</div>
+            `;
+    errorDiv.style.display = 'block';
+  }
+</script>
+</body>
+</html>
