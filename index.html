@@ -108,13 +108,13 @@
 <body>
 <div class="container">
   <div class="header">
-    <h1>🤖 AI Анализ кандидатов</h1>
+    <h1> AI Анализ кандидатов</h1>
     <p>inVision U — помощник для приёмной комиссии</p>
   </div>
   <div class="content">
     <label for="essay"></label><textarea id="essay" placeholder="Вставьте текст эссе или интервью кандидата..."></textarea>
-    <button onclick="analyze()">🔍 Анализировать кандидата</button>
-    <div id="loading" class="loading" style="display: none;">⏳ Анализируем...</div>
+    <button onclick="analyze()"> Анализировать кандидата</button>
+    <div id="loading" class="loading" style="display: none;"> Анализируем...</div>
     <div id="error" class="error"></div>
     <div id="result" class="result"></div>
   </div>
@@ -155,22 +155,22 @@
       }
 
       const scoreClass = data.score >= 70 ? 'score-pass' : 'score-fail';
-      const scoreText = data.score >= 70 ? '✅ Рекомендуется к рассмотрению' : '⚠️ Требуется дополнительное интервью';
+      const scoreText = data.score >= 70 ? ' Рекомендуется к рассмотрению' : ' Требуется дополнительное интервью';
 
       document.getElementById('result').innerHTML = `
-                    <h3>📊 Результат анализа</h3>
+                    <h3> Результат анализа</h3>
                     <div class="${scoreClass}" style="margin-bottom: 15px;">
-                        🎯 Скор: ${data.score}/100 — ${scoreText}
+                         Скор: ${data.score}/100 — ${scoreText}
                     </div>
                     <table>
-                        <tr><td>👤 ФИО</td><td>${data.name}</td></tr>
-                        <tr><td>🎂 Возраст</td><td>не указан</td></tr>
-                        <tr><td>💪 Мотивация</td><td>${data.motivation}</td></tr>
-                        <tr><td>🏆 Успехи</td><td>${data.achievements.join(', ')}</td></tr>
-                        <tr><td>🛠 Навыки</td><td>${data.skills.join(', ')}</td></tr>
-                        <tr><td>✅ Сильные стороны</td><td>${data.strengths.join(', ')}</td></tr>
-                        <tr><td>⚠️ На что обратить внимание</td><td>${data.weaknesses.join(', ')}</td></tr>
-                        <tr><td>💡 Рекомендация</td><td>${data.recommend}</td></tr>
+                        <tr><td> ФИО</td><td>${data.name}</td></tr>
+                        <tr><td> Возраст</td><td>не указан</td></tr>
+                        <tr><td> Мотивация</td><td>${data.motivation}</td></tr>
+                        <tr><td> Успехи</td><td>${data.achievements.join(', ')}</td></tr>
+                        <tr><td> Навыки</td><td>${data.skills.join(', ')}</td></tr>
+                        <tr><td> Сильные стороны</td><td>${data.strengths.join(', ')}</td></tr>
+                        <tr><td> На что обратить внимание</td><td>${data.weaknesses.join(', ')}</td></tr>
+                        <tr><td> Рекомендация</td><td>${data.recommend}</td></tr>
                     </table>
                 `;
       document.getElementById('result').style.display = 'block';
