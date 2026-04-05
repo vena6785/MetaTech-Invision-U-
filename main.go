@@ -1,12 +1,39 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
+
+type Config struct {
+	Port          string
+	BotToken      string
+	ServerTimeout time.Duration
+}
+
+func LoadConfig() *Config {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
+	}
+
+	return &Config{
+		Port:          port,
+		BotToken:      "8271246541:AAEi22YopJfQiKBvXgGv3y4wcyqnRoyquYw",
+		ServerTimeout: 30 * time.Second,
+	}
+}
 
 type AnalysisResult struct {
 	Name         string   `json:"name"`
@@ -17,32 +44,307 @@ type AnalysisResult struct {
 	Skills       []string `json:"skills"`
 	SoftSkills   []string `json:"soft_skills"`
 	Achievements []string `json:"achievements"`
-	Metrics      struct {
-		Motivation   int `json:"motivation"`
-		Skills       int `json:"skills"`
-		Experience   int `json:"experience"`
-		Education    int `json:"education"`
-		Achievements int `json:"achievements"`
-		Grammar      int `json:"grammar"`
-	} `json:"metrics"`
-	Pros                  []string `json:"pros"`
-	Cons                  []string `json:"cons"`
-	QuestionsForInterview []string `json:"questions_for_interview"`
-	AttentionPoints       []string `json:"attention_points"`
-	AiSuggestion          string   `json:"ai_suggestion"`
+	Pros         []string `json:"pros"`
+	Cons         []string `json:"cons"`
+	Questions    []string `json:"questions"`
+	Score        int      `json:"score"`
+	Recommend    string   `json:"recommend"`
 }
 
-func main() {
-	http.HandleFunc("/api/analyze", handleAnalyze)
-	http.Handle("/", http.FileServer(http.Dir("./web")))
-
-	log.Println("Server on http://localhost:3000")
-	log.Fatal(http.ListenAndServe(":3000", nil))
+type TelegramUpdate struct {
+	UpdateID int `json:"update_id"`
+	Message  struct {
+		Chat struct {
+			ID int64 `json:"id"`
+		} `json:"chat"`
+		Text string `json:"text"`
+	} `json:"message"`
 }
 
-func handleAnalyze(w http.ResponseWriter, r *http.Request) {
+func analyzeEssay(essay string) *AnalysisResult {
+	text := strings.ToLower(essay)
+
+	name := extractName(essay)
+	age := extractAge(essay)
+	education := extractEducation(text)
+	experience := extractExperience(text)
+	motivation := extractMotivation(text)
+	skills := extractSkills(text)
+	softSkills := extractSoftSkills(text)
+	achievements := extractAchievements(text)
+
+	score := calculateScore(skills, achievements, motivation)
+
+	return &AnalysisResult{
+		Name:         name,
+		Age:          age,
+		Education:    education,
+		Experience:   experience,
+		Motivation:   motivation,
+		Skills:       skills,
+		SoftSkills:   softSkills,
+		Achievements: achievements,
+		Pros:         generatePros(skills, achievements, motivation),
+		Cons:         generateCons(education, experience),
+		Questions:    generateQuestions(skills, achievements),
+		Score:        score,
+		Recommend:    generateRecommendation(score),
+	}
+}
+
+func calculateScore(skills []string, achievements []string, motivation string) int {
+	score := 50
+
+	if len(skills) >= 3 {
+		score += 20
+	} else if len(skills) >= 1 {
+		score += 10
+	}
+
+	if len(achievements) >= 2 {
+		score += 20
+	} else if len(achievements) >= 1 {
+		score += 10
+	}
+
+	if strings.Contains(motivation, "высокая") {
+		score += 10
+	}
+
+	if score > 100 {
+		score = 100
+	}
+	return score
+}
+
+func generatePros(skills []string, achievements []string, motivation string) []string {
+	pros := []string{}
+
+	if len(skills) >= 2 {
+		pros = append(pros, "Хороший набор технических навыков")
+	}
+	if len(achievements) >= 1 {
+		pros = append(pros, "Есть конкретные достижения")
+	}
+	if strings.Contains(motivation, "высокая") {
+		pros = append(pros, "Высокая мотивация")
+	}
+	if len(pros) == 0 {
+		pros = append(pros, "Есть потенциал для развития")
+	}
+	return pros
+}
+
+func generateCons(education string, experience string) []string {
+	cons := []string{}
+
+	if education == "не указано" {
+		cons = append(cons, "Не указано образование")
+	}
+	if experience == "не указан" {
+		cons = append(cons, "Не указан опыт")
+	}
+	if len(cons) == 0 {
+		cons = append(cons, "Требуется собеседование")
+	}
+	return cons
+}
+
+func generateQuestions(skills []string, achievements []string) []string {
+	questions := []string{
+		"Почему вы выбрали нашу программу?",
+		"Какие ваши карьерные цели?",
+	}
+
+	if len(skills) > 0 {
+		questions = append(questions, "Расскажите о ваших навыках подробнее")
+	}
+	if len(achievements) > 0 {
+		questions = append(questions, "Какое достижение считаете самым значимым?")
+	}
+	return questions
+}
+
+func generateRecommendation(score int) string {
+	if score >= 80 {
+		return "Сильный кандидат, рекомендуется к зачислению"
+	} else if score >= 65 {
+		return "Хороший кандидат, рекомендуется к рассмотрению"
+	} else {
+		return "Требуется дополнительное собеседование"
+	}
+}
+
+type BotService struct {
+	config *Config
+	apiURL string
+	client *http.Client
+}
+
+func NewBotService(cfg *Config) *BotService {
+	return &BotService{
+		config: cfg,
+		apiURL: fmt.Sprintf("https://api.telegram.org/bot%s", cfg.BotToken),
+		client: &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+func (b *BotService) Start() {
+	log.Println("[Bot] Telegram бот запущен")
+	offset := 0
+
+	for {
+		updates, err := b.getUpdates(offset)
+		if err != nil {
+			log.Printf("[Bot] Ошибка: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		for _, update := range updates {
+			b.handleUpdate(update)
+			offset = update.UpdateID + 1
+		}
+	}
+}
+
+func (b *BotService) getUpdates(offset int) ([]TelegramUpdate, error) {
+	url := fmt.Sprintf("%s/getUpdates?offset=%d&timeout=30", b.apiURL, offset)
+	resp, err := b.client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Result []TelegramUpdate `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return result.Result, nil
+}
+
+func (b *BotService) handleUpdate(update TelegramUpdate) {
+	if update.Message.Text == "" {
+		return
+	}
+
+	chatID := update.Message.Chat.ID
+	text := strings.TrimSpace(update.Message.Text)
+
+	if text == "/start" {
+		b.sendMessage(chatID, b.getStartMessage())
+		return
+	}
+
+	b.sendChatAction(chatID)
+
+	result := analyzeEssay(text)
+	b.sendMessage(chatID, b.formatResponse(result))
+}
+
+func (b *BotService) getStartMessage() string {
+	return " *inVision U AI Бот*\n\n" +
+		"Отправьте текст мотивационного письма, и я проанализирую его.\n\n" +
+		"*Что я умею:*\n" +
+		" Анализ мотивации\n" +
+		" Оценка навыков\n" +
+		" Выявление достижений\n" +
+		" Рекомендация"
+}
+
+func (b *BotService) formatResponse(result *AnalysisResult) string {
+	return fmt.Sprintf(
+		" *Результат анализа*\n\n"+
+			" *ФИО:* %s\n"+
+			" *Возраст:* %d\n"+
+			" *Образование:* %s\n"+
+			" *Опыт:* %s\n"+
+			" *Мотивация:* %s\n\n"+
+			" *Навыки:* %s\n"+
+			" *Soft skills:* %s\n"+
+			" *Достижения:* %s\n\n"+
+			" *Плюсы:* %s\n"+
+			"️ *Минусы:* %s\n\n"+
+			" *Вопросы:*\n%s\n\n"+
+			" *Скор:* %d/100\n\n"+
+			" *Рекомендация:* %s",
+		result.Name, result.Age, result.Education, result.Experience, result.Motivation,
+		joinStrings(result.Skills), joinStrings(result.SoftSkills), joinStrings(result.Achievements),
+		joinStrings(result.Pros), joinStrings(result.Cons),
+		joinStrings(result.Questions),
+		result.Score, result.Recommend,
+	)
+}
+
+func (b *BotService) sendMessage(chatID int64, text string) {
+	url := fmt.Sprintf("%s/sendMessage", b.apiURL)
+	body := map[string]interface{}{
+		"chat_id":    chatID,
+		"text":       text,
+		"parse_mode": "Markdown",
+	}
+	jsonData, _ := json.Marshal(body)
+	b.client.Post(url, "application/json", bytes.NewBuffer(jsonData))
+}
+
+func (b *BotService) sendChatAction(chatID int64) {
+	url := fmt.Sprintf("%s/sendChatAction", b.apiURL)
+	body := map[string]interface{}{
+		"chat_id": chatID,
+		"action":  "typing",
+	}
+	jsonData, _ := json.Marshal(body)
+	b.client.Post(url, "application/json", bytes.NewBuffer(jsonData))
+}
+
+type Server struct {
+	config     *Config
+	httpServer *http.Server
+	botService *BotService
+}
+
+func NewServer(cfg *Config) *Server {
+	return &Server{
+		config:     cfg,
+		botService: NewBotService(cfg),
+	}
+}
+
+func (s *Server) Start() error {
+	s.httpServer = &http.Server{
+		Addr:         ":" + s.config.Port,
+		Handler:      s.setupRoutes(),
+		ReadTimeout:  s.config.ServerTimeout,
+		WriteTimeout: s.config.ServerTimeout,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go s.botService.Start()
+
+	go func() {
+		log.Printf("Сервер запущен на http://localhost:%s", s.config.Port)
+		if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("HTTP сервер упал: %v", err)
+		}
+	}()
+
+	return nil
+}
+
+func (s *Server) setupRoutes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/analyze", s.handleAnalyze)
+	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.Handle("/", http.FileServer(http.Dir("./web")))
+
+	return s.corsMiddleware(s.loggingMiddleware(mux))
+}
+
+func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "", http.StatusMethodNotAllowed)
+		s.writeError(w, http.StatusMethodNotAllowed, "Метод не поддерживается")
 		return
 	}
 
@@ -51,169 +353,175 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "", http.StatusBadRequest)
+		s.writeError(w, http.StatusBadRequest, "Неверный JSON")
 		return
 	}
 
-	if strings.TrimSpace(req.Essay) == "" {
-		http.Error(w, "", http.StatusBadRequest)
-		return
-	}
-
-	result := analyzeText(req.Essay)
+	result := analyzeEssay(req.Essay)
 
 	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(result)
-	if err != nil {
-		return
-	}
+	json.NewEncoder(w).Encode(result)
 }
 
-func analyzeText(essay string) *AnalysisResult {
-	text := strings.ToLower(essay)
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
 
-	result := &AnalysisResult{}
-	if strings.Contains(essay, "Анна") {
-		result.Name = "Анна Смирнова"
-	} else if strings.Contains(essay, "Дмитрий") {
-		result.Name = "Дмитрий"
-	} else {
-		lines := strings.Split(essay, "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if len(line) > 0 && len(line) < 50 {
-				hasRus := false
-				for _, ch := range line {
-					if (ch >= 'А' && ch <= 'Я') || (ch >= 'а' && ch <= 'я') {
-						hasRus = true
-						break
-					}
-				}
-				if hasRus {
-					result.Name = line
-					break
+func (s *Server) writeError(w http.ResponseWriter, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[%s] %s", r.Method, r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func joinStrings(arr []string) string {
+	if len(arr) == 0 {
+		return "—"
+	}
+	return strings.Join(arr, ", ")
+}
+
+func extractName(essay string) string {
+	lines := strings.Split(essay, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(line) > 0 && len(line) < 50 {
+			for _, ch := range line {
+				if (ch >= 'А' && ch <= 'Я') || (ch >= 'а' && ch <= 'я') {
+					return line
 				}
 			}
 		}
-		if result.Name == "" {
-			result.Name = "Кандидат"
-		}
 	}
+	return "Кандидат"
+}
+
+func extractAge(essay string) int {
 	words := strings.Fields(essay)
-	for _, word := range words {
-		if age, err := strconv.Atoi(word); err == nil && age >= 16 && age <= 80 {
-			result.Age = age
-			break
+	for _, w := range words {
+		if age, err := strconv.Atoi(w); err == nil && age >= 16 && age <= 80 {
+			return age
 		}
 	}
-	if strings.Contains(text, "мгу") || strings.Contains(text, "университет") {
-		result.Education = "Высшее (МГУ)"
-	} else if strings.Contains(text, "высшее") {
-		result.Education = "Высшее образование"
-	} else {
-		result.Education = "не указано"
+	return 0
+}
+
+func extractEducation(text string) string {
+	if strings.Contains(text, "университет") || strings.Contains(text, "вуз") || strings.Contains(text, "высшее") {
+		return "Высшее образование"
 	}
-	if strings.Contains(text, "3 года") {
-		result.Experience = "3 года (ведущий бухгалтер)"
-	} else if strings.Contains(text, "лет") {
-		result.Experience = "Опыт указан"
-	} else {
-		result.Experience = "не указан"
+	if strings.Contains(text, "школ") || strings.Contains(text, "класс") {
+		return "Среднее образование"
 	}
+	return "не указано"
+}
+
+func extractExperience(text string) string {
+	if strings.Contains(text, "курсы") || strings.Contains(text, "стажировка") {
+		return "Есть дополнительное обучение"
+	}
+	if strings.Contains(text, "проект") || strings.Contains(text, "хакатон") {
+		return "Есть опыт проектной деятельности"
+	}
+	return "не указан"
+}
+
+func extractMotivation(text string) string {
 	if strings.Contains(text, "хочу") && strings.Contains(text, "развитие") {
-		result.Motivation = "Высокая мотивация, четкие цели"
-		result.Metrics.Motivation = 90
-	} else if strings.Contains(text, "хочу") {
-		result.Motivation = "Мотивация прослеживается"
-		result.Metrics.Motivation = 70
-	} else {
-		result.Motivation = "Мотивация выражена слабо"
-		result.Metrics.Motivation = 50
+		return "Высокая мотивация, четкое понимание целей"
 	}
+	if strings.Contains(text, "интерес") || strings.Contains(text, "нравится") {
+		return "Хорошая мотивация"
+	}
+	return "Мотивация прослеживается"
+}
+
+func extractSkills(text string) []string {
 	skills := []string{}
-	if strings.Contains(text, "excel") {
-		skills = append(skills, "Excel")
-	}
-	if strings.Contains(text, "1с") {
-		skills = append(skills, "1С")
-	}
-	if strings.Contains(text, "sql") {
-		skills = append(skills, "SQL")
-	}
-	if strings.Contains(text, "анализ") {
-		skills = append(skills, "Анализ данных")
-	}
-	if strings.Contains(text, "word") {
-		skills = append(skills, "Word")
+	skillList := []string{"go", "python", "java", "javascript", "flutter", "react", "sql", "git", "docker"}
+	for _, s := range skillList {
+		if strings.Contains(text, s) {
+			skills = append(skills, strings.ToUpper(s[:1])+s[1:])
+		}
 	}
 	if len(skills) == 0 {
-		skills = append(skills, "Базовые навыки")
+		skills = append(skills, "Базовые навыки программирования")
 	}
-	result.Skills = skills
-	result.Metrics.Skills = 70 + len(skills)*5
-	if result.Metrics.Skills > 100 {
-		result.Metrics.Skills = 100
-	}
+	return skills
+}
+
+func extractSoftSkills(text string) []string {
 	soft := []string{}
+	if strings.Contains(text, "команд") {
+		soft = append(soft, "Работа в команде")
+	}
 	if strings.Contains(text, "ответствен") {
 		soft = append(soft, "Ответственность")
 	}
-	if strings.Contains(text, "коммуника") {
-		soft = append(soft, "Коммуникабельность")
+	if strings.Contains(text, "обучаем") {
+		soft = append(soft, "Обучаемость")
 	}
-	if strings.Contains(text, "внимательн") {
-		soft = append(soft, "Внимательность")
+	if strings.Contains(text, "аналитическ") {
+		soft = append(soft, "Аналитическое мышление")
 	}
-	if strings.Contains(text, "стресс") {
-		soft = append(soft, "Стрессоустойчивость")
-	}
-	result.SoftSkills = soft
-	achievements := []string{}
-	if strings.Contains(text, "автоматизирова") {
-		achievements = append(achievements, "Автоматизация отчетности")
-	}
-	if strings.Contains(text, "оптимизирова") {
-		achievements = append(achievements, "Оптимизация процессов")
-	}
-	if strings.Contains(text, "внедри") {
-		achievements = append(achievements, "Внедрение новых систем")
-	}
-	if strings.Contains(text, "сократи") {
-		achievements = append(achievements, "Сокращение времени/затрат")
-	}
-	result.Achievements = achievements
-	result.Metrics.Achievements = 60 + len(achievements)*10
-	if result.Metrics.Achievements > 100 {
-		result.Metrics.Achievements = 100
-	}
-	result.Metrics.Experience = 70
-	result.Metrics.Education = 75
-	result.Metrics.Grammar = 80
-	result.Pros = []string{
-		"Профильное образование",
-		"Наличие опыта работы",
-		"Четко выраженная мотивация",
-	}
-	result.Cons = []string{
-		"Явных недостатков не выявлено",
-	}
-	result.QuestionsForInterview = []string{
-		"Почему вы выбрали нашу компанию?",
-		"Расскажите о ваших достижениях подробнее",
-		"Как вы работаете в стрессовых ситуациях?",
-	}
-	result.AttentionPoints = []string{
-		"Рекомендуется провести собеседование",
-	}
-
-	totalScore := (result.Metrics.Motivation + result.Metrics.Skills + result.Metrics.Achievements) / 3
-	if totalScore >= 80 {
-		result.AiSuggestion = "Сильный кандидат. Рекомендуется к приоритетному рассмотрению."
-	} else if totalScore >= 65 {
-		result.AiSuggestion = "Хороший кандидат. Рекомендуется пригласить на собеседование."
-	} else {
-		result.AiSuggestion = "Кандидат требует дополнительной оценки."
-	}
-
-	return result
+	return soft
 }
+
+func extractAchievements(text string) []string {
+	ach := []string{}
+	if strings.Contains(text, "хакатон") {
+		ach = append(ach, "Участие в хакатоне")
+	}
+	if strings.Contains(text, "проект") {
+		ach = append(ach, "Реализованные проекты")
+	}
+	if strings.Contains(text, "олимпиад") {
+		ach = append(ach, "Участие в олимпиадах")
+	}
+	return ach
+}
+
+func main() {
+	cfg := LoadConfig()
+	server := NewServer(cfg)
+
+	if err := server.Start(); err != nil {
+		log.Fatalf("Ошибка запуска: %v", err)
+	}
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Завершение работы...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := server.httpServer.Shutdown(ctx); err != nil {
+		log.Printf("Ошибка при завершении: %v", err)
+	}
+
+	log.Println("Сервер остановлен")
+}
+
