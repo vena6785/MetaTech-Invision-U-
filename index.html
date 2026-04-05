@@ -2,7 +2,8 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>inVision U - Анализ кандидатов</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>inVision U | AI анализ мотивационных писем</title>
   <style>
     * {
       margin: 0;
@@ -33,12 +34,15 @@
       font-size: 28px;
       margin-bottom: 8px;
     }
+    .header p {
+      opacity: 0.8;
+    }
     .content {
       padding: 24px;
     }
     textarea {
       width: 100%;
-      height: 250px;
+      height: 200px;
       padding: 12px;
       border: 2px solid #e0e0e0;
       border-radius: 8px;
@@ -54,15 +58,16 @@
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white;
       border: none;
-      padding: 10px 30px;
+      padding: 12px 30px;
       border-radius: 25px;
       font-size: 16px;
       font-weight: bold;
       cursor: pointer;
       margin-top: 15px;
+      transition: transform 0.2s;
     }
     button:hover {
-      opacity: 0.9;
+      transform: translateY(-2px);
     }
     table {
       width: 100%;
@@ -73,9 +78,10 @@
       padding: 12px;
       text-align: left;
       border-bottom: 1px solid #e0e0e0;
+      vertical-align: top;
     }
     th {
-      background: #f5f5f5;
+      background: #f8f9fa;
       font-weight: 600;
       width: 200px;
     }
@@ -84,10 +90,9 @@
       padding: 4px 12px;
       border-radius: 20px;
       font-weight: bold;
+      background: #d4edda;
+      color: #155724;
     }
-    .score-high { background: #d4edda; color: #155724; }
-    .score-mid { background: #fff3cd; color: #856404; }
-    .score-low { background: #f8d7da; color: #721c24; }
     .tag {
       display: inline-block;
       background: #e9ecef;
@@ -98,7 +103,7 @@
     }
     .loading {
       text-align: center;
-      padding: 20px;
+      padding: 40px;
       display: none;
     }
     .note {
@@ -114,13 +119,18 @@
 <div class="container">
   <div class="header">
     <h1>inVision U</h1>
-    <p>AI анализ мотивационных писем</p>
+    <p>AI анализ мотивационных писем для поступления</p>
   </div>
   <div class="content">
     <textarea id="essay" placeholder="Вставьте текст мотивационного письма..."></textarea>
-    <button onclick="analyze()">Анализировать</button>
-    <div id="loading" class="loading">Загрузка...</div>
+    <button onclick="analyze()"> Анализировать</button>
+
+    <div id="loading" class="loading">
+      <div>AI анализирует письмо...</div>
+    </div>
+
     <div id="result"></div>
+    <div class="note"> AI помогает анализировать. Решение принимает комиссия.</div>
   </div>
 </div>
 
@@ -128,7 +138,7 @@
   async function analyze() {
     const essay = document.getElementById('essay').value;
     if (!essay.trim()) {
-      alert('Введите текст');
+      alert('Введите текст письма');
       return;
     }
 
@@ -138,27 +148,21 @@
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({essay: essay})
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ essay: essay })
       });
       const data = await res.json();
       displayResult(data);
     } catch (err) {
-      document.getElementById('result').innerHTML = '<div style="color:red;">Ошибка: ' + err.message + '</div>';
+      document.getElementById('result').innerHTML = `<div style="color:red;">Ошибка: ${err.message}</div>`;
     } finally {
       document.getElementById('loading').style.display = 'none';
     }
   }
 
-  function getScoreClass(score) {
-    if (score >= 70) return 'score-high';
-    if (score >= 50) return 'score-mid';
-    return 'score-low';
-  }
-
   function formatList(arr) {
     if (!arr || arr.length === 0) return '—';
-    return arr.map(item => '<span class="tag">' + escapeHtml(item) + '</span>').join('');
+    return arr.map(item => `<span class="tag">${escapeHtml(item)}</span>`).join('');
   }
 
   function displayResult(d) {
@@ -167,17 +171,16 @@
                 <tr><th>ФИО</th><td><strong>${escapeHtml(d.name)}</strong></td></tr>
                 <tr><th>Возраст</th><td>${d.age || 'не указан'}</td></tr>
                 <tr><th>Образование</th><td>${escapeHtml(d.education)}</td></tr>
-                <tr><th>Опыт работы</th><td>${escapeHtml(d.experience)}</td></tr>
-                <tr><th>Мотивация</th><td><span class="score ${getScoreClass(d.metrics.motivation)}">${d.metrics.motivation}</span> ${escapeHtml(d.motivation)}</td></tr>
-                <tr><th>Навыки</th><td><span class="score ${getScoreClass(d.metrics.skills)}">${d.metrics.skills}</span><br>${formatList(d.skills)}</td></tr>
+                <tr><th>Опыт</th><td>${escapeHtml(d.experience)}</td></tr>
+                <tr><th>Мотивация</th><td><span class="score">${d.score || 0}</span> ${escapeHtml(d.motivation)}</td></tr>
+                <tr><th>Навыки</th><td>${formatList(d.skills)}</td></tr>
                 <tr><th>Soft skills</th><td>${formatList(d.soft_skills)}</td></tr>
-                <tr><th>Достижения</th><td><span class="score ${getScoreClass(d.metrics.achievements)}">${d.metrics.achievements}</span><br>${formatList(d.achievements)}</td></tr>
-                <tr><th>Аргументы ЗА</th><td>${formatList(d.pros)}</td></tr>
-                <tr><th>Аргументы ПРОТИВ</th><td>${formatList(d.cons)}</td></tr>
-                <tr><th>Вопросы для собеседования</th><td>${formatList(d.questions_for_interview)}</td></tr>
-                <tr><th>Рекомендация</th><td><strong>${escapeHtml(d.ai_suggestion)}</strong></td></tr>
+                <tr><th>Достижения</th><td>${formatList(d.achievements)}</td></tr>
+                <tr><th>Плюсы</th><td>${formatList(d.pros)}</td></tr>
+                <tr><th>Минусы</th><td>${formatList(d.cons)}</td></tr>
+                <tr><th>Вопросы для собеседования</th><td>${formatList(d.questions)}</td></tr>
+                <tr><th>Рекомендация</th><td><strong>${escapeHtml(d.recommend)}</strong></td></tr>
             </table>
-            <div class="note">AI помогает анализировать. Решение принимает комиссия.</div>
         `;
     document.getElementById('result').innerHTML = html;
   }
